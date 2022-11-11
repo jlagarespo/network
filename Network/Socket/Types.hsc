@@ -63,6 +63,7 @@ module Network.Socket.Types (
     , tupleToHostAddress6
     , FlowInfo
     , ScopeID
+    , PacketType(PacketHost, PacketBroadcast, PacketMulticast, PacketOtherHost, PacketOutgoing)
     , peekSockAddr
     , pokeSockAddr
     , withSockAddr
@@ -1047,22 +1048,23 @@ type FlowInfo = Word32
 -- | Scope identifier.
 type ScopeID = Word32
 
-type PacketType = Word8
+newtype PacketType = PacketType Word8
+  deriving (Eq, Ord)
 
 pattern PacketHost :: PacketType
-pattern PacketHost  = (#const PACKET_HOST)
+pattern PacketHost  = PacketType (#const PACKET_HOST)
 
 pattern PacketBroadcast :: PacketType
-pattern PacketBroadcast  = (#const PACKET_BROADCAST)
+pattern PacketBroadcast  = PacketType (#const PACKET_BROADCAST)
 
 pattern PacketMulticast :: PacketType
-pattern PacketMulticast  = (#const PACKET_MULTICAST)
+pattern PacketMulticast  = PacketType (#const PACKET_MULTICAST)
 
 pattern PacketOtherHost :: PacketType
-pattern PacketOtherHost  = (#const PACKET_OTHERHOST)
+pattern PacketOtherHost  = PacketType (#const PACKET_OTHERHOST)
 
 pattern PacketOutgoing :: PacketType
-pattern PacketOutgoing  = (#const PACKET_OUTGOING)
+pattern PacketOutgoing  = PacketType (#const PACKET_OUTGOING)
 
 -- | Socket addresses.
 --  The existence of a constructor does not necessarily imply that
@@ -1207,7 +1209,7 @@ pokeSockAddr p (SockAddrInet6 port flow addr scope) = do
     (#poke struct sockaddr_in6, sin6_flowinfo) p flow
     (#poke struct sockaddr_in6, sin6_addr) p (In6Addr addr)
     (#poke struct sockaddr_in6, sin6_scope_id) p scope
-pokeSockAddr p (SockAddrPacket protocol ifindex hatype pkttype addr) = do
+pokeSockAddr p (SockAddrPacket protocol ifindex hatype (PacketType pkttype) addr) = do
     zeroMemory p (#const sizeof(struct sockaddr_ll))
 # if defined(HAVE_STRUCT_SOCKADDR_SA_LEN)
     (#poke struct sockaddr_ll, sll_len) p ((#const sizeof(struct sockaddr_ll)) :: Word8)
@@ -1247,7 +1249,7 @@ peekSockAddr p = do
         pkttype <- (#peek struct sockaddr_ll, sll_pkttype) p
         halen <- (#peek struct sockaddr_ll, sll_halen) p
         PacketAddr addr <- (#peek struct sockaddr_ll, sll_addr) p
-        return (SockAddrPacket protocol ifindex hatype pkttype (take halen addr))
+        return (SockAddrPacket protocol ifindex hatype (PacketType pkttype) (take halen addr))
     _ -> ioError $ userError $
       "Network.Socket.Types.peekSockAddr: address family '" ++
       show family ++ "' not supported."

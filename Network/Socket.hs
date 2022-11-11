@@ -203,6 +203,8 @@ module Network.Socket
     , ScopeID
     , ifNameToIndex
     , ifIndexToName
+    -- ** Physical Packet type
+    , PacketType(PacketHost, PacketBroadcast, PacketMulticast, PacketOtherHost, PacketOutgoing)
     -- ** Port number
     , PortNumber
     , defaultPort
