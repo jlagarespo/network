@@ -1047,6 +1047,23 @@ type FlowInfo = Word32
 -- | Scope identifier.
 type ScopeID = Word32
 
+type PacketType = Word8
+
+pattern PacketHost :: PacketType
+pattern PacketHost  = (#const PACKET_HOST)
+
+pattern PacketBroadcast :: PacketType
+pattern PacketBroadcast  = (#const PACKET_BROADCAST)
+
+pattern PacketMulticast :: PacketType
+pattern PacketMulticast  = (#const PACKET_MULTICAST)
+
+pattern PacketOtherHost :: PacketType
+pattern PacketOtherHost  = (#const PACKET_OTHERHOST)
+
+pattern PacketOutgoing :: PacketType
+pattern PacketOutgoing  = (#const PACKET_OUTGOING)
+
 -- | Socket addresses.
 --  The existence of a constructor does not necessarily imply that
 --  that socket address type is supported on your system: see
@@ -1063,23 +1080,31 @@ data SockAddr
   -- | The path must have fewer than 104 characters. All of these characters must have code points less than 256.
   | SockAddrUnix
         String           -- sun_path
+  | SockAddrPacket
+        !Word16          -- Family
+        !Int32           -- Interface number
+        !Word16          -- ARP hardware type
+        !PacketType      -- Packet type
+        [Word8]          -- Address
   deriving (Eq, Ord)
 
 instance NFData SockAddr where
   rnf (SockAddrInet _ _) = ()
   rnf (SockAddrInet6 _ _ _ _) = ()
   rnf (SockAddrUnix str) = rnf str
+  rnf (SockAddrPacket _ _ _ _ _) = ()
 
 -- | Is the socket address type supported on this system?
 isSupportedSockAddr :: SockAddr -> Bool
 isSupportedSockAddr addr = case addr of
-  SockAddrInet{}  -> True
-  SockAddrInet6{} -> True
+  SockAddrInet{}   -> True
+  SockAddrInet6{}  -> True
 #if defined(DOMAIN_SOCKET_SUPPORT)
-  SockAddrUnix{}  -> True
+  SockAddrUnix{}   -> True
 #else
-  SockAddrUnix{}  -> False
+  SockAddrUnix{}   -> False
 #endif
+  SockAddrPacket{} -> True
 
 instance SocketAddress SockAddr where
     sizeOfSocketAddress = sizeOfSockAddr
@@ -1116,13 +1141,14 @@ sizeOfSockAddr (SockAddrUnix path) =
         '\0':_ -> (#const sizeof(sa_family_t)) + length path
         _      -> #const sizeof(struct sockaddr_un)
 # else
-sizeOfSockAddr SockAddrUnix{}  = #const sizeof(struct sockaddr_un)
+sizeOfSockAddr SockAddrUnix{}   = #const sizeof(struct sockaddr_un)
 # endif
 #else
-sizeOfSockAddr SockAddrUnix{}  = error "sizeOfSockAddr: not supported"
+sizeOfSockAddr SockAddrUnix{}   = error "sizeOfSockAddr: not supported"
 #endif
-sizeOfSockAddr SockAddrInet{}  = #const sizeof(struct sockaddr_in)
-sizeOfSockAddr SockAddrInet6{} = #const sizeof(struct sockaddr_in6)
+sizeOfSockAddr SockAddrInet{}   = #const sizeof(struct sockaddr_in)
+sizeOfSockAddr SockAddrInet6{}  = #const sizeof(struct sockaddr_in6)
+sizeOfSockAddr SockAddrPacket{} = #const sizeof(struct sockaddr_ll)
 
 -- | Use a 'SockAddr' with a function requiring a pointer to a
 -- 'SockAddr' and the length of that 'SockAddr'.
@@ -1181,6 +1207,18 @@ pokeSockAddr p (SockAddrInet6 port flow addr scope) = do
     (#poke struct sockaddr_in6, sin6_flowinfo) p flow
     (#poke struct sockaddr_in6, sin6_addr) p (In6Addr addr)
     (#poke struct sockaddr_in6, sin6_scope_id) p scope
+pokeSockAddr p (SockAddrPacket protocol ifindex hatype pkttype addr) = do
+    zeroMemory p (#const sizeof(struct sockaddr_ll))
+# if defined(HAVE_STRUCT_SOCKADDR_SA_LEN)
+    (#poke struct sockaddr_ll, sll_len) p ((#const sizeof(struct sockaddr_ll)) :: Word8)
+# endif
+    (#poke struct sockaddr_ll, sll_family) p ((#const AF_PACKET) :: CSaFamily)
+    (#poke struct sockaddr_ll, sll_protocol) p protocol
+    (#poke struct sockaddr_ll, sll_ifindex) p ifindex
+    (#poke struct sockaddr_ll, sll_hatype) p hatype
+    (#poke struct sockaddr_ll, sll_pkttype) p pkttype
+    (#poke struct sockaddr_ll, sll_halen) p (fromIntegral (length addr) :: Word8)
+    (#poke struct sockaddr_ll, sll_addr) p (PacketAddr addr)
 
 -- | Read a 'SockAddr' from the given memory location.
 peekSockAddr :: Ptr SockAddr -> IO SockAddr
@@ -1202,6 +1240,14 @@ peekSockAddr p = do
         In6Addr addr <- (#peek struct sockaddr_in6, sin6_addr) p
         scope <- (#peek struct sockaddr_in6, sin6_scope_id) p
         return (SockAddrInet6 port flow addr scope)
+    (#const AF_PACKET) -> do
+        protocol <- (#peek struct sockaddr_ll, sll_protocol) p
+        ifindex <- (#peek struct sockaddr_ll, sll_ifindex) p
+        hatype <- (#peek struct sockaddr_ll, sll_hatype) p
+        pkttype <- (#peek struct sockaddr_ll, sll_pkttype) p
+        halen <- (#peek struct sockaddr_ll, sll_halen) p
+        PacketAddr addr <- (#peek struct sockaddr_ll, sll_addr) p
+        return (SockAddrPacket protocol ifindex hatype pkttype (take halen addr))
     _ -> ioError $ userError $
       "Network.Socket.Types.peekSockAddr: address family '" ++
       show family ++ "' not supported."
@@ -1311,6 +1357,17 @@ instance Storable In6Addr where
         poke32 p 2 c
         poke32 p 3 d
 
+-- | Private newtype proxy for the Storable instance. To avoid orphan instances.
+newtype PacketAddr = PacketAddr [Word8]
+
+instance Storable PacketAddr where
+    sizeOf    _ = #const sizeof(unsigned char[8])
+    -- Is this OK?
+    -- alignment _ = #alignment unsigned char[8]
+
+    peek p = PacketAddr <$> mapM (peekByteOff p) [0..7]
+
+    poke p (PacketAddr addr) = mapM_ (uncurry $ pokeByteOff p) $ zip [0..] addr
 ------------------------------------------------------------------------
 -- Read and Show instance for pattern-based integral newtypes
 
@@ -1318,7 +1375,7 @@ socktypeBijection :: Bijection SocketType String
 socktypeBijection =
     [ (UnsupportedSocketType, "UnsupportedSocketType")
     , (Stream, "Stream")
-    , (Datagram, "Datagram") 
+    , (Datagram, "Datagram")
     , (Raw, "Raw")
     , (RDM, "RDM")
     , (SeqPacket, "SeqPacket")
