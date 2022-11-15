@@ -7,6 +7,11 @@
 #ifndef HSNET_H
 #define HSNET_H
 
+// No clue what ifdefs to have here.
+// TODO: Figure this out at some point...
+#include <linux/if_packet.h>
+#include <net/ethernet.h> /* the L2 protocols */
+
 #include "HsNetDef.h"
 
 #ifndef INLINE
@@ -73,18 +78,12 @@
 # include <netioapi.h>
 #endif
 
-// No clue what ifdefs to have here.
-// TODO: Figure this out at some point...
-#include <linux/if_packet.h>
-#include <net/ethernet.h> /* the L2 protocols */
-
-
 #ifdef _WIN32
 extern int   initWinSock ();
 extern const char* getWSErrorDescr(int err);
 extern void* newAcceptParams(int sock,
-				 int sz,
-				 void* sockaddr);
+			     int sz,
+			     void* sockaddr);
 extern int   acceptNewSock(void* d);
 extern int   acceptDoProc(void* param);
 
@@ -108,14 +107,14 @@ cmsg_len(unsigned int l);
  */
 extern WINAPI int
 WSASendMsg (SOCKET, LPWSAMSG, DWORD, LPDWORD,
-			LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
+            LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 
 /**
  * WSARecvMsg function
  */
 extern WINAPI int
 WSARecvMsg (SOCKET, LPWSAMSG, LPDWORD,
-			LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
+            LPWSAOVERLAPPED, LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 #else  /* _WIN32 */
 extern int
 sendFd(int sock, int outfd);
@@ -142,9 +141,9 @@ cmsg_len(size_t l);
 INLINE int
 hsnet_getnameinfo(const struct sockaddr* a,socklen_t b, char* c,
 # if defined(_WIN32)
-				  DWORD d, char* e, DWORD f, int g)
+                  DWORD d, char* e, DWORD f, int g)
 # else
-				  socklen_t d, char* e, socklen_t f, int g)
+                  socklen_t d, char* e, socklen_t f, int g)
 # endif
 {
   return getnameinfo(a,b,c,d,e,f,g);
@@ -154,13 +153,13 @@ INLINE int
 hsnet_getaddrinfo(const char *hostname, const char *servname,
 		  const struct addrinfo *hints, struct addrinfo **res)
 {
-	return getaddrinfo(hostname, servname, hints, res);
+    return getaddrinfo(hostname, servname, hints, res);
 }
 
 INLINE void
 hsnet_freeaddrinfo(struct addrinfo *ai)
 {
-	freeaddrinfo(ai);
+    freeaddrinfo(ai);
 }
 
 #ifndef IOV_MAX
